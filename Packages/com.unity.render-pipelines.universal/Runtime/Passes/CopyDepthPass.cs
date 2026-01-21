@@ -274,8 +274,12 @@ namespace UnityEngine.Rendering.Universal.Internal
         /// <param name="passName">The pass name used for debug and identifying the pass.</param>
         public void Render(RenderGraph renderGraph, TextureHandle destination, TextureHandle source, UniversalResourceData resourceData, UniversalCameraData cameraData, bool bindAsCameraDepth = false, string passName = "Copy Depth")
         {
+            /// SLZ MODIFIED - Allow scene view to render MSAA. The final depth copy needs to set the MSAA count to 0
+            /*
             // TODO RENDERGRAPH: should call the equivalent of Setup() to initialise everything correctly
             MsaaSamples = -1;
+            */
+            MsaaSamples = MsaaSamples == 0 ? 0 : -1;
 
             // Having a different pass name than profilingSampler.name is bad practice but this method was public before we cleaned up this naming
             using (var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out var passData, profilingSampler))
@@ -301,7 +305,32 @@ namespace UnityEngine.Rendering.Universal.Internal
                     // Also required for preview camera rendering for grid drawn with builtin RP (UUM-55171).
                     // Also required for render gizmos (UUM-91335).
                     if (cameraData.isSceneViewCamera || cameraData.isPreviewCamera || UnityEditor.Handles.ShouldRenderGizmos())
+                    /// SLZ MODIFIED - Allow scene view to render MSAA. If activeColorTexture has MSAA, we can't bind it with a non-msaa destination depth texture. Make a dummy color target with matching msaa count. 
+                    /*
                         builder.SetRenderAttachment(resourceData.activeColorTexture, 0);
+                     */
+                    {
+                        RenderTargetInfo destDesc = renderGraph.GetRenderTargetInfo(destination);
+                        RenderTargetInfo backBufferDesc = renderGraph.GetRenderTargetInfo(resourceData.activeColorTexture);
+                        if (destDesc.msaaSamples != backBufferDesc.msaaSamples)
+                        {
+                            TextureHandle dummySceneViewColorTarget = renderGraph.CreateTexture(new TextureDesc(backBufferDesc.width, backBufferDesc.height, false, true)
+                            {
+                                name = "Scene View Dummy Render Target",
+                                slices = backBufferDesc.volumeDepth,
+                                format = backBufferDesc.format,
+                                msaaSamples = (MSAASamples)destDesc.msaaSamples,
+                                clearBuffer = false,
+                                bindTextureMS = destDesc.bindMS,
+                            });
+                            builder.SetRenderAttachment(dummySceneViewColorTarget, 0);
+                        }
+                        else
+                        {
+                            builder.SetRenderAttachment(resourceData.activeColorTexture, 0);
+                        }
+                    }
+                    /// END SLZ MODIFIED
 #endif
                 }
                 else if (CopyToDepthXR)
